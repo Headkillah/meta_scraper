@@ -9,7 +9,7 @@ This requires a Kodi formatted NFO file with the same filename as the video file
 The **-s, --scraper** Default option. Scrapes the metadata title from the NFO file and adds it to the associated MKV file
 The **-c --convert** This converts any other video file format to MKV. (WARNING: Currently this script relies on mkvmerge to successfully reject non-video files that aren't NFO and JPG)
 
-##Requirements
+## Requirements
 - xmllint
 - mkvtoolnix
 - A Kodi NFO file creator
