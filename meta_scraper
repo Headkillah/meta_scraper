@@ -1,0 +1,188 @@
+#!/bin/bash
+
+#########################################################
+#                                                       #
+#  Program that creates a title based on a present NFO  #
+#  file and embed that into the MKV metadata. If the	#
+#  file is not MKV the option exists to convert it.	#
+#                                                       #
+#########################################################
+version_date="0.1 Feb 2018"
+#########################################################
+
+version_year=${version_date: -4}
+# Include options parsing
+. $HOME/.bin/options.bash
+
+
+# Add options
+addOption -s --scraper help="Default option. Scrapes the metadata title from the nfo file and adds it to the MKV file"  dontShow flagTrue
+addOption -c --convert help="Converts M4V, MP4, AVI" flagTrue
+addOption -v --version help="Show version information" flagTrue
+
+setUsage "A script to insert the title based on the nfo into the mkv metadata or to convert the video to MKV then scrape it.
+Copyright (C) $version_year John W Rogers
+Version: $version_date
+
+usage: `basename $0` [OPTIONS]  MKVs
+
+Options:\n"
+
+parseOptions "$@"
+
+
+
+####################
+# Helper Functions #
+####################
+
+kill_child_processes() {
+        # Cleanup of daughter processes
+        echo
+        echo "Exiting: Killing Children"
+        echo
+        isTopmost=$1
+        curPid=$2
+        childPids=`ps -o pid --no-headers --ppid ${curPid}`
+        for childPid in $childPids
+        do
+                kill_child_processes 0 $childPid
+        done
+        if [ $isTopmost -eq 0 ]; then
+                kill -9 $curPid 2> /dev/null
+        fi
+}
+
+# Ctrl-C trap.
+trap "kill_child_processes 1 $$; exit 0" SIGHUP SIGINT SIGTERM
+
+# File Checker
+checker() {
+
+	# Filename without extension
+	filename=${1:: -4}
+
+	# If file is MKV return true
+	if [[ $1 == *.mkv ]]; then
+		return 0
+	# If an mkv file with the same name exists return true
+	elif [[ -f "$filename.mkv"  ]]; then
+		return 0
+	else
+		return 1 # If no MKV file exists
+	fi
+}
+
+# Check if nfo file exists
+nfochecker(){
+	# If an nfo file exists for the MKV file return true
+	name=$(basename "$1" .mkv)
+	if [[ -f "$name".nfo  ]]; then
+		return 0
+	else
+		return 3 # No corresponding NFO file exists
+	fi
+}
+
+# Make a temporary delete folder
+mkfolder(){
+	# check if file exists
+	if [ ! -d .delete ]; then
+		mkdir ./.delete
+	fi
+}
+
+scraper(){
+
+	# Check if file is MKV and an NFO exists for that file
+	if  checker "$1"  &&  nfochecker "$1" ; then
+
+		# NFO filename
+		nfofile="$(basename "$1" .mkv).nfo"
+
+		# Extract showtitle from NFO
+		showtitle=$(xmllint --xpath ' /episodedetails/showtitle/text()' "$nfofile")
+
+		# Extract season number from NFO
+		season=$(xmllint --xpath ' /episodedetails/season/text()' "$nfofile")
+
+		# Pad the number to 2 digits
+		if [ $season -lt "10" ];
+		then
+			season=0$season
+		fi
+
+		# Extract episode number from NFO
+		episode=$(xmllint --xpath ' /episodedetails/episode/text()' "$nfofile")
+
+		# Pad the number to 2 digits
+		if [ $episode -lt "10" ];
+		then
+			episode=0$episode
+		fi
+
+		# Create Title
+		title="$showtitle - S$season""E$episode"
+
+		# Modify input mkv to include the created title
+		mkvpropedit "$1" --edit info --set "title=$title" >> /dev/null
+	else
+		return 2 # File isn't MKV
+	fi
+}
+
+# A function to convert any video file format not MKV to MKV
+convert_mkv(){
+
+	if  ! checker "$1" ; then
+
+		# Extract the filename without the extension
+		filename=${1:: -4}
+
+    # Convert the file to MKV
+		mkvmerge -q -o "$filename.mkv" "$1"
+
+		# Move original files into .delete folder
+		mv "$1" ./.delete/
+
+		# Scrape the metadata for the newly created file
+		scraper "$filename.mkv"
+
+	else
+		echo "A file $filename.mkv already exists."
+	fi
+}
+
+
+#################
+# Main Function #
+#################
+if $scraper;
+then
+	#DEBUG echo scraping
+        for vid in "${optArgv[@]}";do
+                scraper "$vid"
+        done
+elif $convert; then
+	#DEBUG echo converting
+
+	# make the temporary .delete folder
+	mkfolder
+        for vid in "${optArgv[@]}";do
+		# Ignore any NFO and JPG files
+		if [[ "$vid" == *.nfo ]] || [[ "$vid" ==  *.jpg ]]; then
+			#DEBUG echo "skipping $vid"
+			continue
+		else
+			#DEBUG echo converting
+			convert_mkv "$vid"
+		fi
+	done
+elif $version; then
+        echo "Converter Script Version: $version"
+else
+	# If nothing specified scrape metadata
+	for vid in "${optArgv[@]}";do
+		scraper "$vid"
+	done
+fi
